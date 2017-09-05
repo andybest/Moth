@@ -1,45 +1,47 @@
 import LLVM
 
-enum MothIR {
-    case functionCall(FunctionCall)
+/*
+ (+ 1 2 (- 4 1))
+ 
+ [
+     .functionCall(MIRFuncCall(name: "+", args: [
+         .value(.integer(1)),
+         .value(integer(2)),
+         .functionCall(MIRFuncCall(name: "-", args: [
+             .value(.integer(4)), .value(.integer(1))
+         ])
+     ]
+ ]
+ 
+ imv1 = call "-" [ 4, 1 ]
+ imv2 = call "+" [ 1, 2, imv1 ]
+*/
+
+
+enum MIRBoxedValueType: Int8 {
+    case `nil` = 0
+    case int
+    case float
+    case list
+}
+
+enum MIRValue {
     case integer(Int)
     case float(Double)
     case `nil`
 }
 
-struct FunctionCall {
+enum MothIR {
+    case defineGlobal(name: String, value: MIRValue)
+    case functionCall(MIRFuncCall)
+    case defFunction(MIRFunc)
+}
+
+struct MIRFuncCall {
     let name: String
     let args: [MothIR]
 }
 
-struct Function {
-    let type: IRType
-}
-
-func formToMothIR(_ form: LispType) -> MothIR {
-    switch form {
-    case .list(let l):
-        return listToMothIR(l)
-    case .number(let num):
-        switch num {
-        case .float(let f):
-            return .float(f)
-        case .integer(let i):
-            return .integer(i)
-        }
-        
-    default: return .nil
-    }
-}
-
-func listToMothIR(_ list: [LispType]) -> MothIR {
-    if case let .symbol(sym) = list.first! {
-        // Special form: function call
-        let funcName = sym
-        let args = list.dropFirst().map { formToMothIR($0) }
-        let call = FunctionCall(name: funcName, args: args)
-        return .functionCall(call)
-    }
+struct MIRFunc {
     
-    return .nil
 }

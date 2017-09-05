@@ -9,8 +9,8 @@ let src = """
 """
 
 let form = try Reader.read(src)
-let ir = formToMothIR(form)
+//let ir = formToMothIR(form)
 
 let builder = Builder()
-try builder.buildIR(ir)
+try builder.buildIR(MothIR.defineGlobal(name: "test", value: .integer(1)))
 builder.module.dump()

@@ -16,5 +16,9 @@ let package = Package(
         .target(
             name: "Moth",
             dependencies: ["LLVM"]),
+        
+        .testTarget(
+            name: "MothTests",
+            dependencies: ["Moth", "LLVM"]),
     ]
 )

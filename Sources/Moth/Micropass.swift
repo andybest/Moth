@@ -8,6 +8,8 @@
 import Foundation
 
 class Language<T> {
+    var expression: ExpressionConstruct<T>
+    
     var constructs: [LanguageConstruct<T>] {
         didSet {
             for c in constructs {
@@ -18,6 +20,8 @@ class Language<T> {
     
     init() {
         constructs = []
+        expression = ExpressionConstruct<T>()
+        expression.parentLanguage = self
     }
     
     func matchingConstruct(_ input: T) -> LanguageConstruct<T>? {
@@ -51,6 +55,10 @@ class Language<T> {
         }
         
         c.transformFunc = transformer
+    }
+    
+    func removeConstruct(_ name: String) {
+        constructs = constructs.filter { $0.name != name }
     }
 }
 
@@ -115,6 +123,24 @@ extension LanguageConstruct {
     static func => (lc: LanguageConstruct, transformFunc: @escaping (T) -> T) -> LanguageConstruct {
         lc.transformFunc = transformFunc
         return lc
+    }
+}
+
+class ExpressionConstruct<T>: LanguageConstruct<T> {
+    var e: OneOfConstruct<T> {
+        let c = OneOfConstruct<T>()
+        c.constructs = parentLanguage!.constructs
+        c.explicitName = "ε"
+        
+        return c
+    }
+    
+    override func matches(input: T) -> Bool {
+        return e.matches(input: input)
+    }
+    
+    override func transform(input: T) -> T {
+        return e.transform(input: input)
     }
 }
 
@@ -344,26 +370,26 @@ func make() {
             return true
     }
     
+    let lang = Language<LispType>()
+    
     let datum = OneOfConstruct<LispType>(symbol, boolean)
     datum.constructs.append(ListConstruct(MultiConstruct(datum)))
-    
-    let expression = OneOfConstruct<LispType>()
-    // Need to give this an explicit name, or we'll end up with a stack overflow error, since it is recursive.
-    expression.explicitName = "ε"
     
     let quote = ListConstruct( SymbolConstruct(symbolName: "quote"), datum ).settingName("quote")
     quote.transformChildForms = false
     
-    let ifOneArmed = ListConstruct( SymbolConstruct(symbolName: "if"), expression, expression).settingName("ifOneArmed")
-    let ifTwoArmed = ListConstruct( SymbolConstruct(symbolName: "if"), expression, expression, expression).settingName("ifTwoArmed")
-    let doBlock = ListConstruct( SymbolConstruct(symbolName: "do"), MultiConstruct(expression)).settingName("doBlock")
+    let ifOneArmed = ListConstruct( SymbolConstruct(symbolName: "if"), lang.expression, lang.expression).settingName("ifOneArmed")
+    let ifTwoArmed = ListConstruct( SymbolConstruct(symbolName: "if"), lang.expression, lang.expression, lang.expression).settingName("ifTwoArmed")
+    let doBlock = ListConstruct( SymbolConstruct(symbolName: "do"), MultiConstruct(lang.expression)).settingName("doBlock")
     
     let fArgs = ListConstruct(MultiConstruct(symbol))
     fArgs.transformChildForms = false
-    let function = ListConstruct( SymbolConstruct(symbolName: "fn"), fArgs, MultiConstruct(expression)).settingName("functionDef")
-    let apply = ListConstruct(symbol, MultiConstruct(expression)).settingName("applyForm")
+    let function = ListConstruct( SymbolConstruct(symbolName: "fn"), fArgs, MultiConstruct(lang.expression)).settingName("functionDef")
+    let apply = ListConstruct(symbol, MultiConstruct(lang.expression)).settingName("applyForm")
     
-    let lang = Language<LispType>()
+    let letForm = ListConstruct( SymbolConstruct(symbolName: "let"),
+                                 ListConstruct(MultiConstruct(lang.expression)), MultiConstruct(lang.expression)).settingName("letForm")
+    
     
     lang.constructs = [
         symbol,
@@ -373,16 +399,9 @@ func make() {
         ifTwoArmed,
         doBlock,
         function,
+        letForm,
         apply
     ]
-    
-    expression.constructs = lang.constructs
-    
-    let test = LispType.list([.symbol("if"), .boolean(true), .list([.symbol("if"), .boolean(false), .symbol("A")])])
-    let test1 = LispType.list([.symbol("fn"),
-                               .list([.symbol("x"), .symbol("y")]),
-                               .list([.symbol("+"), .symbol("x"), .symbol("y")])
-        ])
     
     lang.addTransformerForConstruct("ifOneArmed") { input in
         guard case let .list(lst) = input else {
@@ -395,7 +414,9 @@ func make() {
     }
     
     let lang2 = lang.createChildLanguage()
+    lang2.removeConstruct("ifOneArmed")
     
+    // Add explicit "do" around function body
     lang2.addTransformerForConstruct("functionDef") { input in
         guard case let .list(lst) = input else {
             fatalError()
@@ -408,6 +429,20 @@ func make() {
         return .list(Array(head) + [newTail])
     }
     
+    // Add explicit "do" around let body
+    lang2.addTransformerForConstruct("letForm") { input in
+        guard case let .list(lst) = input else {
+            fatalError()
+        }
+        
+        let head = lst[0..<2]
+        let tail = Array(lst.dropFirst(2))
+        let newTail = LispType.list([.symbol("do")] + tail)
+        
+        return .list(Array(head) + [newTail])
+    }
+    
+    
     let passes = [
         lang,
         lang2
@@ -416,7 +451,8 @@ func make() {
     let testInput = """
     (fn (x y)
         (if (and (not (nil? x)) (not (nil? y)))
-            (+ x y)))
+            (let (result (+ x y))
+                result)))
     """
     
     let testForm = try! Reader.read(testInput)

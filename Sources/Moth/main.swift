@@ -13,4 +13,6 @@ let form = try Reader.read(src)
 
 let builder = Builder()
 //try builder.buildIR(MothIR.defineGlobal(name: "test", value: .integer(1)))
-builder.module.dump()
+//builder.module.dump()
+
+make()

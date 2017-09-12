@@ -34,6 +34,24 @@ class Language<T> {
         let c = matchingConstruct(input)
         return c!.transform(input: input)
     }
+    
+    func createChildLanguage() -> Language<T> {
+        let newLang = Language()
+        newLang.constructs = constructs.map {
+            $0.clone()
+        }
+        
+        return newLang
+    }
+    
+    func addTransformerForConstruct(_ name: String, transformer: @escaping (T) -> T) {
+        let filtered = constructs.filter { $0.name == name }
+        guard let c = filtered.first else {
+            fatalError("Construct \(name) doesn't exist!")
+        }
+        
+        c.transformFunc = transformer
+    }
 }
 
 class LanguageConstruct<T> {
@@ -53,6 +71,11 @@ class LanguageConstruct<T> {
     init() {
     }
     
+    required init(other: LanguageConstruct<T>) {
+        self.explicitName = other.explicitName
+        self.matchFunc = other.matchFunc
+    }
+    
     func transform(input: T) -> T {
         guard let tf = transformFunc else {
             return input
@@ -69,9 +92,14 @@ class LanguageConstruct<T> {
         return mf(input)
     }
     
-    func settingName(_ n: String) -> LanguageConstruct<T> {
+    func settingName(_ n: String) -> Self {
         self.explicitName = n
         return self
+    }
+    
+    func clone() -> Self {
+        let newLang = type(of: self).init(other: self)
+        return newLang
     }
 }
 
@@ -104,6 +132,16 @@ class MultiConstruct<T>: LanguageConstruct<T> {
     
     init(_ matchingConstruct: LanguageConstruct<T>) {
         self.matchingConstruct = matchingConstruct
+        super.init()
+    }
+    
+    required init(other: LanguageConstruct<T>) {
+        if other is MultiConstruct<T> {
+            self.matchingConstruct = (other as! MultiConstruct<T>).matchingConstruct
+            super.init(other: other)
+        }
+        
+        fatalError()
     }
     
     override func matches(input: T) -> Bool {
@@ -124,6 +162,16 @@ class SymbolConstruct: LanguageConstruct<LispType> {
     
     init(symbolName: String) {
         self.symbolName = symbolName
+        super.init()
+    }
+    
+    required init(other: LanguageConstruct<LispType>) {
+        if other is SymbolConstruct {
+            self.symbolName = (other as! SymbolConstruct).symbolName
+            super.init(other: other)
+        }
+        
+        fatalError()
     }
     
     override func matches(input: LispType) -> Bool {
@@ -149,6 +197,16 @@ class OneOfConstruct<T>: LanguageConstruct<T> {
     
     init(_ constructs: LanguageConstruct<T>...) {
         self.constructs = constructs
+        super.init()
+    }
+    
+    required init(other: LanguageConstruct<T>) {
+        if other is OneOfConstruct<T> {
+            self.constructs = (other as! OneOfConstruct<T>).constructs
+            super.init(other: other)
+        }
+        
+        fatalError()
     }
     
     override func matches(input: T) -> Bool {
@@ -164,6 +222,7 @@ class OneOfConstruct<T>: LanguageConstruct<T> {
 
 class ListConstruct: LanguageConstruct<LispType> {
     var body: [LanguageConstruct<LispType>]
+    var transformChildForms: Bool = true
     
     override var name: String {
         if self.explicitName != nil {
@@ -177,6 +236,13 @@ class ListConstruct: LanguageConstruct<LispType> {
     
     init(_ body: LanguageConstruct<LispType>...) {
         self.body = body
+        super.init()
+    }
+    
+    required init(other: LanguageConstruct<LispType>) {
+            self.body = (other as! ListConstruct).body
+            self.transformChildForms = (other as! ListConstruct).transformChildForms
+            super.init(other: other)
     }
     
     override func matches(input: LispType) -> Bool {
@@ -212,8 +278,6 @@ class ListConstruct: LanguageConstruct<LispType> {
                 return false
             }
             
-            print("Matches: \(self.name)")
-            
             return true
             
             
@@ -223,6 +287,10 @@ class ListConstruct: LanguageConstruct<LispType> {
     }
     
     override func transform(input: LispType) -> LispType {
+        if !transformChildForms {
+            return input
+        }
+        
         var retList = [LispType]()
         
         switch input {
@@ -283,11 +351,17 @@ func make() {
     // Need to give this an explicit name, or we'll end up with a stack overflow error, since it is recursive.
     expression.explicitName = "ε"
     
-    let quote = ListConstruct( SymbolConstruct(symbolName: "quote"), datum )
-    let ifOneArmed = ListConstruct( SymbolConstruct(symbolName: "if"), expression, expression)
-    let ifTwoArmed = ListConstruct( SymbolConstruct(symbolName: "if"), expression, expression, expression)
-    let doBlock = ListConstruct( SymbolConstruct(symbolName: "do"), MultiConstruct(expression))
+    let quote = ListConstruct( SymbolConstruct(symbolName: "quote"), datum ).settingName("quote")
+    quote.transformChildForms = false
     
+    let ifOneArmed = ListConstruct( SymbolConstruct(symbolName: "if"), expression, expression).settingName("ifOneArmed")
+    let ifTwoArmed = ListConstruct( SymbolConstruct(symbolName: "if"), expression, expression, expression).settingName("ifTwoArmed")
+    let doBlock = ListConstruct( SymbolConstruct(symbolName: "do"), MultiConstruct(expression)).settingName("doBlock")
+    
+    let fArgs = ListConstruct(MultiConstruct(symbol))
+    fArgs.transformChildForms = false
+    let function = ListConstruct( SymbolConstruct(symbolName: "fn"), fArgs, MultiConstruct(expression)).settingName("functionDef")
+    let apply = ListConstruct(symbol, MultiConstruct(expression)).settingName("applyForm")
     
     let lang = Language<LispType>()
     
@@ -297,14 +371,20 @@ func make() {
         quote,
         ifOneArmed,
         ifTwoArmed,
-        doBlock
+        doBlock,
+        function,
+        apply
     ]
     
     expression.constructs = lang.constructs
     
     let test = LispType.list([.symbol("if"), .boolean(true), .list([.symbol("if"), .boolean(false), .symbol("A")])])
+    let test1 = LispType.list([.symbol("fn"),
+                               .list([.symbol("x"), .symbol("y")]),
+                               .list([.symbol("+"), .symbol("x"), .symbol("y")])
+        ])
     
-    _ = ifOneArmed => { input in
+    lang.addTransformerForConstruct("ifOneArmed") { input in
         guard case let .list(lst) = input else {
             fatalError()
         }
@@ -314,5 +394,40 @@ func make() {
         return .list(retList)
     }
     
-    print(lang.doPass(test))
+    let lang2 = lang.createChildLanguage()
+    
+    lang2.addTransformerForConstruct("functionDef") { input in
+        guard case let .list(lst) = input else {
+            fatalError()
+        }
+        
+        let head = lst[0..<2]
+        let tail = Array(lst.dropFirst(2))
+        let newTail = LispType.list([.symbol("do")] + tail)
+        
+        return .list(Array(head) + [newTail])
+    }
+    
+    let passes = [
+        lang,
+        lang2
+    ]
+    
+    let testInput = """
+    (fn (x y)
+        (if (and (not (nil? x)) (not (nil? y)))
+            (+ x y)))
+    """
+    
+    let testForm = try! Reader.read(testInput)
+    
+    var output = testForm
+    
+    print(output)
+    
+    for pass in passes {
+        output = pass.doPass(output)
+    }
+    
+    print(output)
 }

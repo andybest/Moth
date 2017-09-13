@@ -7,6 +7,48 @@
 
 import Foundation
 
+enum ConstructPosition {
+    case beginning
+    case beforeEnd
+    case end
+}
+
+class PassManager<T> {
+    typealias Transform = (T) -> T
+    var languages: [Language<T>] = []
+    
+    init(baseLanguage: Language<T>) {
+        languages.append(baseLanguage)
+    }
+    
+    func addPass(addConstructs: [(name: String, position: ConstructPosition, construct: LanguageConstruct<T>)],
+                 removeConstructs: [String],
+                 transformations: [String: Transform]) {
+        let newLang = languages.last!.createChildLanguage()
+        
+        for c in addConstructs {
+            newLang.addConstruct(name: c.name, position: c.position, construct: c.construct)
+        }
+        
+        for transform in transformations {
+            newLang.addTransformerForConstruct(transform.key, transformer: transform.value)
+        }
+        
+        for c in removeConstructs {
+            newLang.removeConstruct(c)
+        }
+        
+        languages.append(newLang)
+    }
+    
+    func runPasses(input: T) -> T {
+        return languages.reduce(input) {
+            $1.doPass($0)
+        }
+    }
+    
+}
+
 class Language<T> {
     var expression: ExpressionConstruct<T>
     
@@ -55,6 +97,21 @@ class Language<T> {
         }
         
         c.transformFunc = transformer
+    }
+    
+    func addConstruct(name: String, position: ConstructPosition, construct: LanguageConstruct<T>) {
+        switch position {
+        case .beginning:
+            constructs.insert(construct.settingName(name), at: 0)
+        case .beforeEnd:
+            if constructs.count > 1 {
+                constructs.insert(construct.settingName(name), at: constructs.endIndex)
+            } else {
+                addConstruct(name: name, position: .beginning, construct: construct)
+            }
+        case .end:
+            constructs.insert(construct.settingName(name), at: constructs.endIndex)
+        }
     }
     
     func removeConstruct(_ name: String) {
@@ -266,9 +323,9 @@ class ListConstruct: LanguageConstruct<LispType> {
     }
     
     required init(other: LanguageConstruct<LispType>) {
-            self.body = (other as! ListConstruct).body
-            self.transformChildForms = (other as! ListConstruct).transformChildForms
-            super.init(other: other)
+        self.body = (other as! ListConstruct).body
+        self.transformChildForms = (other as! ListConstruct).transformChildForms
+        super.init(other: other)
     }
     
     override func matches(input: LispType) -> Bool {
@@ -347,7 +404,7 @@ func make() {
             case .symbol(_): return true
             default: return false
             }
-        }
+    }
     
     let boolean = LanguageConstruct<LispType>().settingName("boolean")
         =? {
@@ -355,19 +412,6 @@ func make() {
             case .boolean(_): return true
             default: return false
             }
-        }
-    
-    let list = LanguageConstruct<LispType>().settingName("list")
-        =? {
-            switch $0 {
-            case .list(_): return true
-            default: return false
-            }
-        }
-    
-    let anyType = LanguageConstruct<LispType>().settingName("any")
-        =? { t in
-            return true
     }
     
     let lang = Language<LispType>()
@@ -403,50 +447,66 @@ func make() {
         apply
     ]
     
-    lang.addTransformerForConstruct("ifOneArmed") { input in
-        guard case let .list(lst) = input else {
-            fatalError()
-        }
-        
-        var retList = lst
-        retList.append(.symbol("nil"))
-        return .list(retList)
-    }
+    let passManager = PassManager(baseLanguage: lang)
     
-    let lang2 = lang.createChildLanguage()
-    lang2.removeConstruct("ifOneArmed")
+    // Remove one armed if, repace with a 2 armed, with the second returning nil
+    passManager.addPass(addConstructs: [],
+                        removeConstructs: [
+                            "ifOneArmed"
+        ],
+                        transformations: [
+                            "ifOneArmed": { input in
+                                guard case let .list(lst) = input else {
+                                    fatalError()
+                                }
+                                
+                                var retList = lst
+                                retList.append(.symbol("nil"))
+                                return .list(retList)
+                            }
+        ])
     
-    // Add explicit "do" around function body
-    lang2.addTransformerForConstruct("functionDef") { input in
-        guard case let .list(lst) = input else {
-            fatalError()
-        }
-        
-        let head = lst[0..<2]
-        let tail = Array(lst.dropFirst(2))
-        let newTail = LispType.list([.symbol("do")] + tail)
-        
-        return .list(Array(head) + [newTail])
-    }
+    // Add an explicit "do" form around function bodies
+    passManager.addPass(addConstructs: [
+        (name: "functionDef", position: .beforeEnd, construct: ListConstruct( SymbolConstruct(symbolName: "fn"), fArgs, doBlock))
+        ],
+                        removeConstructs: [],
+                        transformations: [
+                            
+                            "functionDef": { input in
+                                guard case let .list(lst) = input else {
+                                    fatalError()
+                                }
+                                
+                                let head = lst[0..<2]
+                                let tail = Array(lst.dropFirst(2))
+                                let newTail = LispType.list([.symbol("do")] + tail)
+                                
+                                return .list(Array(head) + [newTail])
+                            }
+        ])
     
-    // Add explicit "do" around let body
-    lang2.addTransformerForConstruct("letForm") { input in
-        guard case let .list(lst) = input else {
-            fatalError()
-        }
-        
-        let head = lst[0..<2]
-        let tail = Array(lst.dropFirst(2))
-        let newTail = LispType.list([.symbol("do")] + tail)
-        
-        return .list(Array(head) + [newTail])
-    }
-    
-    
-    let passes = [
-        lang,
-        lang2
-    ]
+    // Add an explicit "do" form around let bodies
+    passManager.addPass(addConstructs: [
+        (name: "letForm", position: .beforeEnd, construct: ListConstruct( SymbolConstruct(symbolName: "let"),
+                                                                          ListConstruct(MultiConstruct(lang.expression)), doBlock))
+        ],
+                        removeConstructs: [
+                            "letForm"
+        ],
+                        transformations: [
+                            "letForm": { input in
+                                guard case let .list(lst) = input else {
+                                    fatalError()
+                                }
+                                
+                                let head = lst[0..<2]
+                                let tail = Array(lst.dropFirst(2))
+                                let newTail = LispType.list([.symbol("do")] + tail)
+                                
+                                return .list(Array(head) + [newTail])
+                            }
+        ])
     
     let testInput = """
     (fn (x y)
@@ -456,14 +516,8 @@ func make() {
     """
     
     let testForm = try! Reader.read(testInput)
+    let output = passManager.runPasses(input: testForm)
     
-    var output = testForm
-    
-    print(output)
-    
-    for pass in passes {
-        output = pass.doPass(output)
-    }
-    
+    print(testForm)
     print(output)
 }

@@ -43,7 +43,6 @@ class ClauseReader {
     }
     
     func read_token(_ token: ClauseTokenType) throws -> LanguageClause {
-        print("Reading token \(token)")
         switch token {
         case .lParen:
             return try read_list()

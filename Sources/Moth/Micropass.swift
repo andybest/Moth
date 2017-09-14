@@ -453,7 +453,7 @@ func make() {
     
     let passManager = PassManager(baseLanguage: lang)
     
-    // Remove one armed if, repace with a 2 armed, with the second returning nil
+    // Remove one armed if, relpace with a 2 armed, with the second returning nil
     passManager.addPass(addConstructs: [],
                         removeConstructs: [
                             "ifOneArmed"

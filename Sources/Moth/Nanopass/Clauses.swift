@@ -16,6 +16,7 @@ enum ClauseCaptureType {
 class LanguageClause {
     weak var passManager: PassManager!
     var captureType: ClauseCaptureType = .one
+    var transform: TransformFunc?
     
     init(passManager: PassManager) {
         self.passManager = passManager
@@ -27,6 +28,14 @@ class LanguageClause {
     
     func debugDescription() -> String {
         return ""
+    }
+    
+    func doTransform(_ input: LispType) -> LispType {
+        if transform != nil {
+            return transform!(input)
+        }
+        
+        return input
     }
 }
 
@@ -96,6 +105,27 @@ class ListClause: LanguageClause {
             return true
             
         default: return false
+        }
+    }
+    
+    override func doTransform(_ input: LispType) -> LispType {
+        var retList = [LispType]()
+        
+        switch input {
+        case .list(let lst):
+            for item in lst {
+                let c = passManager.currentLanguage.matchingClause(item)!
+                retList.append(c.doTransform(item))
+            }
+            
+            if let tf = transform {
+                return tf(.list(retList))
+            }
+            
+            return .list(retList)
+            
+        default:
+            fatalError("Cannot transform non-matching input!")
         }
     }
     
@@ -218,6 +248,30 @@ class TerminalSymbolClause: LanguageClause {
     }
     
     override func debugDescription() -> String {
-        return symbolName
+        var desc = symbolName
+        
+        switch self.captureType {
+        case .oneOrMore: desc += "+"
+        case .zeroOrMore: desc += "*"
+        default: break
+        }
+        
+        return desc
+    }
+    
+    override func doTransform(_ input: LispType) -> LispType {
+        guard let clause = passManager.currentLanguage.findTerminalClause(symbol: symbolName) else {
+            fatalError("Unknown terminal clause '\(symbolName)'")
+        }
+        
+        if clause is ExpressionTerminalClause {
+            guard let clause = passManager.currentLanguage.matchingClause(input) else {
+                fatalError("Unable to find matching clause!")
+            }
+            
+            return clause.doTransform(input)
+        }
+        
+        return input
     }
 }

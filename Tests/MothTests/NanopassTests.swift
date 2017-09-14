@@ -27,9 +27,6 @@ class NanopassTests: XCTestCase {
         
         let clauseSrc = "('let ([s s]+) (s+))"
         let mgr = PassManager()
-        
-        let clause = try! ClauseReader.read(clauseSrc, passManager: mgr)
-        
        
         let lang = Language(terminalClauses: [
             "s": VariableTerminalClause(passManager: mgr)

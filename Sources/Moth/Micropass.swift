@@ -12,7 +12,7 @@ enum ConstructPosition {
     case beforeEnd
     case end
 }
-
+/*
 class PassManager<T> {
     typealias Transform = (T) -> T
     var languages: [Language<T>] = []
@@ -60,6 +60,8 @@ class Language<T> {
         }
     }
     
+    var removeConstructs: [String] = []
+    
     init() {
         constructs = []
         expression = ExpressionConstruct<T>()
@@ -85,6 +87,8 @@ class Language<T> {
         let newLang = Language()
         newLang.constructs = constructs.map {
             $0.clone()
+            }.filter {
+                !removeConstructs.contains($0.name)
         }
         
         return newLang
@@ -115,7 +119,7 @@ class Language<T> {
     }
     
     func removeConstruct(_ name: String) {
-        constructs = constructs.filter { $0.name != name }
+        removeConstructs.append(name)
     }
 }
 
@@ -478,6 +482,11 @@ func make() {
                                     fatalError()
                                 }
                                 
+                                // Don't wrap in a do if there is only one expression in the body
+                                if lst.count == 3 {
+                                    return input
+                                }
+                                
                                 let head = lst[0..<2]
                                 let tail = Array(lst.dropFirst(2))
                                 let newTail = LispType.list([.symbol("do")] + tail)
@@ -500,6 +509,11 @@ func make() {
                                     fatalError()
                                 }
                                 
+                                // Don't wrap in a do if there is only one expression in the body
+                                if lst.count == 3 {
+                                    return input
+                                }
+                                
                                 let head = lst[0..<2]
                                 let tail = Array(lst.dropFirst(2))
                                 let newTail = LispType.list([.symbol("do")] + tail)
@@ -508,11 +522,56 @@ func make() {
                             }
         ])
     
+    // Remove Not
+    passManager.addPass(addConstructs: [
+        (name: "notForm", position: .beginning, construct: ListConstruct( SymbolConstruct(symbolName: "not"), lang.expression)),
+        (name: "ifNotForm", position: .beginning, construct: ListConstruct(SymbolConstruct(symbolName: "if"), ListConstruct(SymbolConstruct(symbolName: "not"), lang.expression), lang.expression, lang.expression))
+        ],
+                        removeConstructs: [
+                            "notForm",
+                            "ifNotForm"
+        ],
+                        transformations: [
+                            "notForm": { input in
+                                /* Replace:
+                                     (not x)
+                                   with:
+                                     (if x false true)
+                                 */
+                                
+                                guard case let .list(lst) = input else {
+                                    fatalError()
+                                }
+                                
+                                let v = lst[1]
+                                
+                                return .list([.symbol("if"), v, .symbol("false"), .symbol("true")])
+                            },
+                            "ifNotForm": { input in
+                                /* Replace:
+                                     (if (not x) ε1 ε2)
+                                 with:
+                                     (if x ε2 ε1)
+                                 */
+                                
+                                guard case let .list(ifList) = input else {
+                                    fatalError()
+                                }
+                                
+                                guard case let .list(notList) = ifList[1] else {
+                                    fatalError()
+                                }
+                                
+                                return .list([.symbol("if"), notList[1], ifList[3], ifList[2]])
+                            }
+        ])
+    
     let testInput = """
     (fn (x y)
         (if (and (not (nil? x)) (not (nil? y)))
             (let (result (+ x y))
-                result)))
+                (if (not x)
+                    result))))
     """
     
     let testForm = try! Reader.read(testInput)
@@ -520,4 +579,4 @@ func make() {
     
     print(testForm)
     print(output)
-}
+}*/

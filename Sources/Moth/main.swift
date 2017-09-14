@@ -15,4 +15,4 @@ let builder = Builder()
 //try builder.buildIR(MothIR.defineGlobal(name: "test", value: .integer(1)))
 //builder.module.dump()
 
-make()
+//make()
